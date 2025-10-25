@@ -1,137 +1,111 @@
 import os
 import json
+import requests
+import datetime
 from dotenv import load_dotenv
 from mqtt_handler import MQTTHandler
-from openai import OpenAI
 from email_handler import get_email_summary
 
-# ---------------- Load environment variables ----------------
 load_dotenv()
 
-OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+GEMINI_MODEL = "gemini-2.5-flash"  # Updated to current free model (was 1.5, now 2.5)
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"  # Added ?key for query auth (headers still included)
+
 MQTT_BROKER = os.getenv("MQTT_BROKER")
 MQTT_PORT = int(os.getenv("MQTT_PORT"))
 MQTT_TOPIC_SENSOR = os.getenv("MQTT_TOPIC_SENSOR")
 MQTT_TOPIC_BACKEND = os.getenv("MQTT_TOPIC_BACKEND")
 
-# ---------------- OpenAI Client ----------------
-openai_client = OpenAI(api_key=OPENAI_API_KEY) if OPENAI_API_KEY else None
-
-# ---------------- Generate Quote ----------------
 def generate_quote(temp, humidity, co2, light):
-    """Generate inspirational quote based on sensor data"""
-    if not openai_client:
-        return "Stay positive and productive! 🌟"
-    
+    if not GEMINI_API_KEY:
+        return "Stay positive! 🌟"
+
     prompt = (
-        f"Generate a very short (max 10 words) inspirational quote for someone in a room with: "
-        f"Temp: {temp}°C, Humidity: {humidity}%, CO2: {co2}ppm, Light: {light}%."
+        f"Generate a short (max 10 words) poetic quote inspired by: "
+        f"Temp {temp}°C, Humidity {humidity}%, CO₂ {co2}ppm, Light {light}%."
     )
-    try:
-        response = openai_client.chat.completions.create(
-            model="gpt-3.5-turbo",
-            messages=[{"role": "user", "content": prompt}],
-            temperature=0.7,
-            max_tokens=30
-        )
-        return response.choices[0].message.content.strip()
-    except Exception as e:
-        print(f"⚠️ OpenAI API error: {e}")
-        return "Stay focused and energized! ✨"
 
-# ---------------- Email Summary ----------------
+    try:
+        headers = {
+            "Content-Type": "application/json",
+            "x-goog-api-key": GEMINI_API_KEY  # Backup header auth
+        }
+        payload = {
+            "contents": [{"parts": [{"text": prompt}]}],
+            "generationConfig": {"temperature": 0.8, "maxOutputTokens": 50}
+        }
+
+        response = requests.post(GEMINI_API_URL, headers=headers, json=payload)
+        response.raise_for_status()
+        data = response.json()
+        text = data["candidates"][0]["content"]["parts"][0]["text"].strip()
+        return text or "Breathe easy, stay inspired! ✨"
+
+    except Exception as e:
+        print(f"Gemini error: {e}")
+        return "Focus and thrive! 💡"  # Your fallback—keep it
+
 def summarize_emails():
-    """Get email summary using email_handler"""
     try:
-        summary = get_email_summary()
-        return summary
+        return get_email_summary()
     except Exception as e:
-        print(f"⚠️ Email summary error: {e}")
-        return "Email check unavailable"
+        print(f"Email error: {e}")
+        return "Email check failed"
 
-# ---------------- MQTT Callback ----------------
 def on_message(client, userdata, msg):
-    """Handle incoming MQTT messages from ESP32"""
     data = msg.payload.decode()
-    print(f"\n📩 Received from ESP32: {data}")
-    
-    try:
-        # Try parsing as JSON first
-        try:
-            sensor_data = json.loads(data)
-            temp = sensor_data.get("temperature")
-            humidity = sensor_data.get("humidity")
-            co2 = sensor_data.get("co2", 400)  # Default CO2 if not provided
-            light = sensor_data.get("light", 50)  # Default light if not provided
-            
-        except json.JSONDecodeError:
-            # If JSON fails, try CSV format
-            values = data.split(",")
-            if len(values) == 4:
-                temp, humidity, co2, light = values
-            elif len(values) == 2:
-                # Only temperature and humidity provided
-                temp, humidity = values
-                co2 = 400  # Default CO2
-                light = 50  # Default light
-                print("⚠️ Only temp & humidity received, using defaults for CO2 & light")
-            else:
-                raise ValueError(f"Invalid data format: expected 2 or 4 values, got {len(values)}")
-        
-        # Convert to float
-        temp = float(temp)
-        humidity = float(humidity)
-        co2 = float(co2)
-        light = float(light)
-        
-        print(f"🌡 Temp: {temp}°C | 💧 Hum: {humidity}% | 🌬 CO2: {co2} ppm | 💡 Light: {light}%")
+    print(f"\nReceived: {data}")
 
-        # Generate quote and email summary
+    try:
+        values = [float(x) for x in data.split(",")]
+        temp = values[0]
+        humidity = values[1]
+        co2 = values[2] if len(values) > 2 else 400
+        light = values[3] if len(values) > 3 else 50
+
+        print(f"Temp: {temp}°C | Hum: {humidity}% | CO₂: {co2}ppm | Light: {light}%")
+
+        # Log
+        with open("sensor_log.txt", "a") as f:
+            f.write(f"{datetime.datetime.now()} - T:{temp}, H:{humidity}, C:{co2}, L:{light}\n")
+
         quote = generate_quote(temp, humidity, co2, light)
         email_summary = summarize_emails()
 
-        # Publish JSON back to MQTT
+        urgency = "high" if any(word in email_summary.lower() for word in ["urgent", "asap", "important"]) else "low"
+
         message = {
             "temperature": temp,
             "humidity": humidity,
             "co2": co2,
             "light": light,
             "quote": quote,
-            "email_summary": email_summary
+            "email_summary": email_summary,
+            "urgency": urgency
         }
-        
+
         mqtt_handler.publish(message)
-        print(f"✅ Published to backend topic")
-        print(f"   📧 Email: {email_summary}")
-        print(f"   💬 Quote: {quote}")
+        print(f"Quote: {quote}")
+        print(f"Email: {email_summary}")
+        print(f"Urgency: {urgency}")
 
     except Exception as e:
-        print(f"⚠️ Error processing data: {e}")
-        import traceback
-        traceback.print_exc()
+        print(f"Error: {e}")
 
-# ---------------- Initialize MQTT ----------------
 mqtt_handler = MQTTHandler(
     broker=MQTT_BROKER,
     port=MQTT_PORT,
     topic_sensor=MQTT_TOPIC_SENSOR,
     topic_backend=MQTT_TOPIC_BACKEND,
-    on_message_callback=on_message
+    on_message_callback=on_message,
 )
 
-# ---------------- Main ----------------
 if __name__ == "__main__":
-    print("🚀 AuraLink Backend Starting...")
-    print(f"📡 Connecting to MQTT broker: {MQTT_BROKER}:{MQTT_PORT}")
-    print(f"📥 Listening on: {MQTT_TOPIC_SENSOR}")
-    print(f"📤 Publishing to: {MQTT_TOPIC_BACKEND}")
-    
+    print("AuraLink Backend Starting...")
     mqtt_handler.connect()
-    print("✅ Backend running and waiting for sensor data...\n")
-    
+    print("Backend running...")
     try:
-        while True:
-            pass
+        while True: pass
     except KeyboardInterrupt:
-        print("\n👋 Shutting down gracefully...")
         mqtt_handler.disconnect()

@@ -22,3 +22,7 @@ class MQTTHandler:
 
     def publish(self, message):
         self.client.publish(self.topic_backend, json.dumps(message))
+
+    def disconnect(self):
+        self.client.loop_stop()
+        self.client.disconnect()

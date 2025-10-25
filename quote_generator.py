@@ -6,9 +6,9 @@ from openai import OpenAI
 # Make sure .env is loaded before creating the OpenAI client
 load_dotenv()  # <-- important
 
-api_key = os.getenv("OPENAI_API_KEY")
+api_key = os.getenv("GEMINI_API_KEY")
 if not api_key:
-    raise ValueError("❌ OPENAI_API_KEY not found in environment variables. Check your .env file!")
+    raise ValueError("❌ GEMINI_API_KEY not found in environment variables. Check your .env file!")
 
 client = OpenAI(api_key=api_key)
 
