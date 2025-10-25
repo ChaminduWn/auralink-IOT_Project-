@@ -9,10 +9,13 @@
 #define DHTTYPE DHT22
 #define MQ135_PIN 32
 #define LDR_PIN 33
+#define RGB_RED 25    // RGB LED pins (adjust as needed)
+#define RGB_GREEN 26
+#define RGB_BLUE 27
 
 // Wi-Fi credentials
-const char* WIFI_SSID = "SLT_FIBER_X4YcU";
-const char* WIFI_PASS = "P772nTZC";
+const char* WIFI_SSID = "Galaxy M22 ";
+const char* WIFI_PASS = "18517Wn*";
 
 // MQTT broker
 const char* MQTT_SERVER = "broker.hivemq.com";
@@ -26,11 +29,11 @@ DHT dht(DHTPIN, DHTTYPE);
 LiquidCrystal_I2C lcd(0x27, 16, 2);
 
 String deviceId;
-String topicSensor;
-String topicDisplay;
+String topicSensor = "auralink/sensor";
+String topicDisplay = "auralink/backend";  // Match backend topic
 
-// ---------------- Scrolling Quote ----------------
-String currentQuote = "";
+// ---------------- Scrolling Message ----------------
+String currentMessage = "";
 unsigned long lastScrollTime = 0;
 int scrollPos = 0;
 const unsigned long scrollInterval = 300; // ms between scroll steps
@@ -87,12 +90,24 @@ void mqttCallback(char* topic, byte* payload, unsigned int length) {
     return;
   }
 
-  if (doc.containsKey("quote")) {
-    currentQuote = doc["quote"].as<String>();
-    scrollPos = 0; // reset scroll position
-    lastScrollTime = millis();
-    Serial.print("💬 New Quote: ");
-    Serial.println(currentQuote);
+  String quote = doc["quote"].as<String>();
+  String email = doc["email_summary"].as<String>();
+  String urgency = doc["urgency"].as<String>();
+  currentMessage = quote + " | Emails: " + email;  // Combine for scrolling
+  scrollPos = 0; // reset scroll position
+  lastScrollTime = millis();
+  Serial.print("💬 New Message: ");
+  Serial.println(currentMessage);
+
+  // Set RGB LED based on urgency
+  if (urgency == "high") {
+    digitalWrite(RGB_RED, HIGH);
+    digitalWrite(RGB_GREEN, LOW);
+    digitalWrite(RGB_BLUE, LOW);  // Red for high urgency
+  } else {
+    digitalWrite(RGB_RED, LOW);
+    digitalWrite(RGB_GREEN, HIGH);
+    digitalWrite(RGB_BLUE, LOW);  // Green for low
   }
 }
 
@@ -119,20 +134,9 @@ void sendSensorData() {
   Serial.printf("CO₂: %.0f ppm | Light: %.0f%%\n", co2ppm, lightPercent);
   Serial.println("---------------------------------------");
 
-  // Show readings on LCD (top row)
+  // Show readings on LCD (condensed on line 0)
   lcd.setCursor(0, 0);
-  lcd.print("T:");
-  lcd.print(temperature, 1);
-  lcd.print("C H:");
-  lcd.print(humidity, 0);
-  lcd.print("%   "); // clear remaining chars
-
-  lcd.setCursor(0, 1);
-  lcd.print("CO2:");
-  lcd.print(co2ppm, 0);
-  lcd.print(" L:");
-  lcd.print(lightPercent, 0);
-  lcd.print("%   "); // clear remaining chars
+  lcd.printf("T:%.1f H:%.0f C:%.0f L:%.0f", temperature, humidity, co2ppm, lightPercent);
 
   // --- CSV Payload for Python backend ---
   String payload = String(temperature) + "," + String(humidity) + "," + String(co2ppm) + "," + String(lightPercent);
@@ -143,16 +147,16 @@ void sendSensorData() {
   }
 }
 
-// ---------------- Display Scrolling Quote ----------------
-void displayScrollingQuote() {
-  if (currentQuote.length() <= 16) return; // no scroll needed
+// ---------------- Display Scrolling Message ----------------
+void displayScrollingMessage() {
+  if (currentMessage.length() == 0) return;
   if (millis() - lastScrollTime >= scrollInterval) {
     lastScrollTime = millis();
-    String displayText = currentQuote.substring(scrollPos, scrollPos + 16);
+    String displayText = currentMessage.substring(scrollPos, scrollPos + 16);
+    if (displayText.length() < 16) displayText += String(" ").substring(0, 16 - displayText.length());  // Pad with spaces
     lcd.setCursor(0, 1);
     lcd.print(displayText);
-    scrollPos++;
-    if (scrollPos + 16 > currentQuote.length()) scrollPos = 0; // loop
+    scrollPos = (scrollPos + 1) % (currentMessage.length() + 16);  // Loop with pause
   }
 }
 
@@ -169,12 +173,18 @@ void setup() {
   dht.begin();
   delay(2000);
 
+  // RGB LED setup
+  pinMode(RGB_RED, OUTPUT);
+  pinMode(RGB_GREEN, OUTPUT);
+  pinMode(RGB_BLUE, OUTPUT);
+  digitalWrite(RGB_RED, LOW);
+  digitalWrite(RGB_GREEN, LOW);
+  digitalWrite(RGB_BLUE, LOW);
+
   connectWiFi();
 
   deviceId = WiFi.macAddress();
   deviceId.replace(":", "");
-  topicSensor = "auralink/sensor";
-  topicDisplay = "auradev/" + deviceId + "/display";
 
   client.setServer(MQTT_SERVER, MQTT_PORT);
   client.setCallback(mqttCallback);
@@ -196,5 +206,5 @@ void loop() {
     sendSensorData();
   }
 
-  displayScrollingQuote();
+  displayScrollingMessage();
 }
