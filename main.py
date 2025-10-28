@@ -9,8 +9,8 @@ from email_handler import get_email_summary
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-GEMINI_MODEL = "gemini-2.5-flash"  # Updated to current free model (was 1.5, now 2.5)
-GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"  # Added ?key for query auth (headers still included)
+GEMINI_MODEL = "gemini-1.5-flash"  # Corrected model name (was 2.5, which doesn't exist)
+GEMINI_API_URL = f"https://generativelanguage.googleapis.com/v1beta/models/{GEMINI_MODEL}:generateContent?key={GEMINI_API_KEY}"
 
 MQTT_BROKER = os.getenv("MQTT_BROKER")
 MQTT_PORT = int(os.getenv("MQTT_PORT"))
@@ -29,7 +29,7 @@ def generate_quote(temp, humidity, co2, light):
     try:
         headers = {
             "Content-Type": "application/json",
-            "x-goog-api-key": GEMINI_API_KEY  # Backup header auth
+            "x-goog-api-key": GEMINI_API_KEY
         }
         payload = {
             "contents": [{"parts": [{"text": prompt}]}],
@@ -44,7 +44,7 @@ def generate_quote(temp, humidity, co2, light):
 
     except Exception as e:
         print(f"Gemini error: {e}")
-        return "Focus and thrive! 💡"  # Your fallback—keep it
+        return "Focus and thrive! 💡"
 
 def summarize_emails():
     try:
@@ -58,11 +58,20 @@ def on_message(client, userdata, msg):
     print(f"\nReceived: {data}")
 
     try:
-        values = [float(x) for x in data.split(",")]
-        temp = values[0]
-        humidity = values[1]
-        co2 = values[2] if len(values) > 2 else 400
-        light = values[3] if len(values) > 3 else 50
+        if data.startswith('{'):
+            # Handle occasional JSON input (e.g., from another source)
+            doc = json.loads(data)
+            temp = float(doc.get("temperature", 0))
+            humidity = float(doc.get("humidity", 0))
+            co2 = float(doc.get("co2", 400))
+            light = float(doc.get("light", 50))
+        else:
+            # Standard CSV
+            values = [float(x) for x in data.split(",")]
+            temp = values[0]
+            humidity = values[1]
+            co2 = values[2] if len(values) > 2 else 400
+            light = values[3] if len(values) > 3 else 50
 
         print(f"Temp: {temp}°C | Hum: {humidity}% | CO₂: {co2}ppm | Light: {light}%")
 
